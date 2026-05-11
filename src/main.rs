@@ -1,18 +1,14 @@
 use serde::Deserialize;
 
-const TARGET_VOTE_ACCOUNT: &str = "FdGcvmbpebUwYA3vSywnagsaC3Tq3pAVmcR6VoxVcdV9";
+const TARGET_VOTE_ACCOUNT: &str =
+    "FdGcvmbpebUwYA3vSywnagsaC3Tq3pAVmcR6VoxVcdV9";
 
 #[derive(Debug, Deserialize)]
-struct BondResponse {
-    bonds: Vec<ValidatorBond>,
-}
-
-#[derive(Debug, serde::Deserialize)]
 struct ValidatorsResponse {
     validators: Vec<Validator>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Validator {
     vote_account: String,
     info_name: Option<String>,
@@ -21,41 +17,119 @@ struct Validator {
 }
 
 #[derive(Debug, Deserialize)]
-struct ValidatorBond {
-    authority: String,
-    vote_account: String,
-    pubkey: String,
-    bond_type: String,
-    funded_amount: f64,
-    effective_amount: f64,
-    max_stake_wanted: f64,
-    updated_at: String,
+struct BondsResponse {
+    bonds: Vec<Bond>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), reqwest::Error> {
-    let url_1 = "https://validator-bonds-api.marinade.finance/bonds/bidding";
-    let url_2 = "https://validators-api.marinade.finance/validators?limit=9999&epochs=0";
-    let response: ValidatorsResponse = reqwest::get(url_2).await?.json().await?;
-    
-    // let validator = response.bonds.iter().find(|bond| bond.vote_account == TARGET_VOTE_ACCOUNT);
-    let validator = response.validators.iter().find(|v| v.vote_account == TARGET_VOTE_ACCOUNT);
-    
-    match validator {
-        Some(v) => {
-            let select_tvl_sol: f64 = v.institutional_stake.parse::<f64>().unwrap_or(0.0) / 1_000_000_000.0;
-
-            println!("Name: {}", v.info_name.as_deref().unwrap_or("Unknown"));
-            println!("Vote account: {}", v.vote_account);
-            println!("Select TVL: {:.2} SOL", select_tvl_sol);
-            println!("Inflation comission: {}%", v.commission_advertised.unwrap_or(0));
-        }
-         None => println!("Validator not found"),       
-    }
-    
-    Ok(())
+#[derive(Debug, Deserialize)]
+struct Bond {
+    vote_account: String,
+    effective_amount: f64,
 }
 
 fn lamports_to_sol(lamports: f64) -> f64 {
     lamports / 1_000_000_000.0
+}
+
+#[tokio::main]
+async fn main() -> Result<(), reqwest::Error> {
+    let validator_url =
+        "https://validators-api.marinade.finance/validators?limit=9999&epochs=0";
+
+    let bond_url =
+        "https://validator-bonds-api.marinade.finance/bonds/institutional";
+
+    // Fetch both APIs concurrently
+    let (validator_res, bond_res) = tokio::join!(
+        reqwest::get(validator_url),
+        reqwest::get(bond_url)
+    );
+
+    let validators: ValidatorsResponse =
+        validator_res?.json().await?;
+
+    let bonds: BondsResponse =
+        bond_res?.json().await?;
+
+    let validator = validators
+        .validators
+        .iter()
+        .find(|v| v.vote_account == TARGET_VOTE_ACCOUNT);
+
+    let bond = bonds
+        .bonds
+        .iter()
+        .find(|b| b.vote_account == TARGET_VOTE_ACCOUNT);
+
+    match (validator, bond) {
+        (Some(v), Some(b)) => {
+            let select_tvl_sol =
+                v.institutional_stake
+                    .parse::<f64>()
+                    .unwrap_or(0.0)
+                    / 1_000_000_000.0;
+
+            let bond_sol =
+                lamports_to_sol(b.effective_amount);
+
+            // Select TVL / 1000
+            let select_tvl_bond_required =
+                select_tvl_sol / 1000.0;
+
+            // Minimum required bond = above / 2
+            let minimum_required_bond =
+                select_tvl_bond_required / 2.0;
+
+            let status = if bond_sol >= minimum_required_bond {
+                "🟢"
+            } else {
+                "🔴"
+            };
+
+            println!("==============================");
+
+            println!(
+                "Validator: {}",
+                v.info_name.as_deref().unwrap_or("Unknown")
+            );
+
+            println!("Vote Account: {}", v.vote_account);
+
+            println!("Select TVL: {:.2} SOL", select_tvl_sol);
+
+            println!(
+                "Inflation Commission: {}%",
+                v.commission_advertised.unwrap_or(0)
+            );
+
+            println!("Bond: {:.3} SOL", bond_sol);
+
+            println!(
+                "Select TVL Bond Required: {:.3}",
+                select_tvl_bond_required
+            );
+
+            println!(
+                "Bond amount {:.3} {} Select TVL Required ({:.3}/2) = {:.3}",
+                bond_sol,
+                if bond_sol >= minimum_required_bond {
+                    ">"
+                } else {
+                    "<"
+                },
+                select_tvl_bond_required,
+                minimum_required_bond
+            );
+
+            println!("Status: {}", status);
+
+            println!("==============================");
+        }
+
+        _ => {
+            println!("Validator or bond not found");
+        }
+    }
+
+    Ok(())
 }
