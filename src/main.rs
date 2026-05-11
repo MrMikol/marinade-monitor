@@ -31,6 +31,24 @@ fn lamports_to_sol(lamports: f64) -> f64 {
     lamports / 1_000_000_000.0
 }
 
+async fn send_to_slack(
+    webhook_url: &str,
+    message: &str,
+) -> Result<(), reqwest::Error> {
+    let client = reqwest::Client::new();
+
+    client
+        .post(webhook_url)
+        .json(&serde_json::json!({
+            "text": message
+        }))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
     let validator_url =
