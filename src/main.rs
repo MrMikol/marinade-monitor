@@ -1,3 +1,4 @@
+use dotenvy::from_path;
 use serde::Deserialize;
 
 const TARGET_VOTE_ACCOUNT: &str =
@@ -51,6 +52,9 @@ async fn send_to_slack(
 
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
+    // Load environment variables from server path
+    from_path("/etc/opt/app/slack/.env").ok();
+
     let validator_url =
         "https://validators-api.marinade.finance/validators?limit=9999&epochs=0";
 
@@ -104,6 +108,13 @@ async fn main() -> Result<(), reqwest::Error> {
                 "🔴"
             };
 
+            let comparison_symbol =
+                if bond_sol >= minimum_required_bond {
+                    ">"
+                } else {
+                    "<"
+                };
+
             println!("==============================");
 
             println!(
@@ -130,11 +141,7 @@ async fn main() -> Result<(), reqwest::Error> {
             println!(
                 "Bond amount {:.3} {} Select TVL Required ({:.3}/2) = {:.3}",
                 bond_sol,
-                if bond_sol >= minimum_required_bond {
-                    ">"
-                } else {
-                    "<"
-                },
+                comparison_symbol,
                 select_tvl_bond_required,
                 minimum_required_bond
             );
@@ -142,6 +149,34 @@ async fn main() -> Result<(), reqwest::Error> {
             println!("Status: {}", status);
 
             println!("==============================");
+
+            // Slack message
+            let slack_message = format!(
+                "*Marinade Validator Bond Check*\n\
+                Name: {}\n\
+                Validator: `{}`\n\
+                Select TVL: {:.2} SOL\n\
+                Bond: {:.3} SOL\n\
+                Select TVL Bond Required: {:.3}\n\
+                Bond amount {:.3} {} Select TVL Required ({:.3}/2) = {:.3}\n\
+                Status: {}",
+                v.info_name.as_deref().unwrap_or("Unknown"),
+                v.vote_account,
+                select_tvl_sol,
+                // v.commission_advertised.unwrap_or(0),
+                bond_sol,
+                select_tvl_bond_required,
+                bond_sol,
+                comparison_symbol,
+                select_tvl_bond_required,
+                minimum_required_bond,
+                status
+            );
+
+            let webhook_url = std::env::var("SLACK_WEBHOOK_URL")
+                .expect("SLACK_WEBHOOK_URL is not set");
+
+            send_to_slack(&webhook_url, &slack_message).await?;
         }
 
         _ => {
